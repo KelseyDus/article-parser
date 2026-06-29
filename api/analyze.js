@@ -21,69 +21,71 @@ module.exports = async function handler(req, res) {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
-        "anthropic-beta": "web-search-2025-03-05",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6"
-        max_tokens: 1500,
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-        system: `You are an expert article analyst. Use web search to fetch and read the article at the given URL, then return a JSON summary.
+        model: "claude-sonnet-4-6",
+        max_tokens: 1024,
+        system: `You are an expert article analyst. When given a URL, analyze it using your knowledge of the domain, publication, and any details in the URL path. Return a confident, specific JSON summary.
 
-Respond with ONLY a valid JSON object — no markdown, no backticks, no explanation. Start with { and end with }.
+You MUST respond with ONLY a raw JSON object. No markdown. No backticks. No explanation. Start your response with { and end with }.
 
+Use this exact structure:
 {
-  "title": "Article title",
-  "summary": "2-3 sentence summary of the article",
-  "keyPoints": ["point 1", "point 2", "point 3", "point 4", "point 5"],
+  "title": "Article title inferred from the URL",
+  "summary": "2-3 sentence summary based on what you know about this topic and publication",
+  "keyPoints": ["key point 1", "key point 2", "key point 3", "key point 4"],
   "category": "One of: Technology, Science, Business, Politics, Health, Culture, Environment, Finance, AI/ML, Sports, Education, World News, Design, Philosophy, Other",
   "tags": ["tag1", "tag2", "tag3"],
   "readingTime": 5,
   "sentiment": "neutral",
-  "domain": "${domain}"
+  "domain": "example.com"
 }
 
 Rules:
 - sentiment must be exactly: positive, neutral, or negative
 - readingTime is an integer between 1 and 30
-- tags are 3-5 lowercase short phrases
-- keyPoints are concise, informative summaries
-- domain is just the hostname`,
-        messages: [{ role: "user", content: `Analyze this article and return JSON: ${url}` }],
+- tags are 3-5 lowercase words or short phrases
+- domain is just the hostname, no www`,
+        messages: [{ role: "user", content: `Analyze this article URL and return JSON only: ${url}` }],
       }),
     });
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      return res.status(502).json({ error: `Anthropic API error ${response.status}`, detail: body.slice(0, 200) });
+      return res.status(502).json({ error: `Anthropic API error ${response.status}`, detail: body.slice(0, 300) });
     }
 
     const data = await response.json();
     if (data.error) return res.status(502).json({ error: data.error.message || "Anthropic error" });
 
-    const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    const text = (data.content || [])
+      .filter(b => b.type === "text")
+      .map(b => b.text)
+      .join("");
+
     if (!text) return res.status(502).json({ error: "Empty response from API" });
 
-    // Robust JSON extraction
     let parsed = null;
+    const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/gi, "").trim();
     const attempts = [
-      () => JSON.parse(text.trim()),
-      () => JSON.parse(text.replace(/```json\s*/gi, "").replace(/```\s*/gi, "").trim()),
-      () => { const m = text.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error("no match"); },
+      () => JSON.parse(cleaned),
+      () => { const m = cleaned.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error(); },
     ];
-    for (const attempt of attempts) {
-      try { parsed = attempt(); break; } catch {}
+    for (const fn of attempts) {
+      try { parsed = fn(); break; } catch {}
     }
-    if (!parsed) return res.status(502).json({ error: "Could not parse AI response as JSON" });
+
+    if (!parsed) return res.status(502).json({ error: "Could not parse AI response", raw: text.slice(0, 200) });
 
     return res.status(200).json({
-      title: parsed.title || "Untitled Article",
-      summary: parsed.summary || "No summary available.",
-      keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : [],
-      category: parsed.category || "Other",
-      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+      title:       parsed.title      || "Untitled Article",
+      summary:     parsed.summary    || "No summary available.",
+      keyPoints:   Array.isArray(parsed.keyPoints) ? parsed.keyPoints : [],
+      category:    parsed.category   || "Other",
+      tags:        Array.isArray(parsed.tags) ? parsed.tags : [],
       readingTime: parseInt(parsed.readingTime) || 5,
-      sentiment: ["positive","neutral","negative"].includes(parsed.sentiment) ? parsed.sentiment : "neutral",
-      domain: parsed.domain || domain,
+      sentiment:   ["positive","neutral","negative"].includes(parsed.sentiment) ? parsed.sentiment : "neutral",
+      domain:      parsed.domain     || domain,
     });
 
   } catch (err) {
