@@ -20,7 +20,7 @@ module.exports = async function handler(req, res) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-4-20250514",
         max_tokens: 1024,
         system: `You are an expert LinkedIn content writer for a digital marketing agency. Write engaging LinkedIn posts that feel human, professional, and shareable — not robotic or overly formal.
 
