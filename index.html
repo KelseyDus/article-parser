@@ -1,37 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ArticleVault</title>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    :root {
-      --bg: #080c14; --surface: #0e1420; --surface2: #141b2d;
-      --border: #1e2a40; --accent: #0af; --text: #e2e8f0; --muted: #64748b;
-    }
-    html, body, #root { height: 100%; }
-    body { background: var(--bg); color: var(--text); font-family: 'DM Sans', system-ui, sans-serif; overflow: hidden; }
-    input::placeholder { color: var(--muted); }
-    select option { background: var(--surface); }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
-    ::-webkit-scrollbar { width: 5px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ArticleVault</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #080c14; --surface: #0e1420; --surface2: #141b2d;
+  --border: #1e2a40; --accent: #0af; --text: #e2e8f0; --muted: #64748b;
+}
+html, body, #root { height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: 'DM Sans', system-ui, sans-serif; overflow: hidden; }
+input::placeholder { color: var(--muted); }
+select option { background: var(--surface); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useCallback } = React;
+const { useState, useEffect, useCallback, useRef } = React;
 
 const TAG_COLORS = {
   "Technology":"#00d4ff","Science":"#7c3aed","Business":"#f59e0b",
@@ -47,6 +47,65 @@ const S = {
 };
 
 function tc(cat) { return TAG_COLORS[cat] || TAG_COLORS["Other"]; }
+
+// ── Persistent Storage helpers ──
+// Uses the artifact storage API if available, falls back to chunked localStorage
+const STORAGE_KEY = "articlevault_articles";
+const CHUNK_SIZE = 40; // articles per chunk to stay under 5MB localStorage limit
+
+async function loadArticles() {
+  // Try artifact persistent storage first
+  if (window.storage) {
+    try {
+      const result = await window.storage.get(STORAGE_KEY);
+      if (result) return JSON.parse(result.value);
+    } catch (e) {}
+  }
+  // Fallback: chunked localStorage
+  try {
+    const meta = JSON.parse(localStorage.getItem(STORAGE_KEY + "_meta") || "{}");
+    const chunks = meta.chunks || 1;
+    let all = [];
+    for (let i = 0; i < chunks; i++) {
+      const chunk = JSON.parse(localStorage.getItem(STORAGE_KEY + "_" + i) || "[]");
+      all = all.concat(chunk);
+    }
+    if (all.length > 0) return all;
+    // Legacy single key
+    return JSON.parse(localStorage.getItem("articlevault_v1") || "[]");
+  } catch (e) {
+    return [];
+  }
+}
+
+async function saveArticles(articles) {
+  // Try artifact persistent storage first
+  if (window.storage) {
+    try {
+      await window.storage.set(STORAGE_KEY, JSON.stringify(articles));
+      return;
+    } catch (e) {}
+  }
+  // Fallback: chunked localStorage - split into chunks of CHUNK_SIZE
+  try {
+    const chunks = [];
+    for (let i = 0; i < articles.length; i += CHUNK_SIZE) {
+      chunks.push(articles.slice(i, i + CHUNK_SIZE));
+    }
+    // Clear old chunks
+    const oldMeta = JSON.parse(localStorage.getItem(STORAGE_KEY + "_meta") || "{}");
+    for (let i = 0; i < (oldMeta.chunks || 0); i++) {
+      localStorage.removeItem(STORAGE_KEY + "_" + i);
+    }
+    // Write new chunks
+    chunks.forEach((chunk, i) => {
+      localStorage.setItem(STORAGE_KEY + "_" + i, JSON.stringify(chunk));
+    });
+    localStorage.setItem(STORAGE_KEY + "_meta", JSON.stringify({ chunks: chunks.length, total: articles.length }));
+  } catch (e) {
+    console.warn("Storage save failed:", e);
+  }
+}
 
 async function analyzeArticle(url) {
   const res = await fetch("/api/analyze", {
@@ -88,7 +147,6 @@ function Modal({ article, onClose }) {
         maxWidth:680, width:"100%", maxHeight:"85vh", overflowY:"auto",
         animation:"slideUp 0.2s ease",
       }}>
-        {/* header */}
         <div style={{
           padding:"24px 26px 18px", borderBottom:`1px solid ${S.border}`,
           position:"sticky", top:0, background:S.surface, zIndex:1,
@@ -102,8 +160,6 @@ function Modal({ article, onClose }) {
           </div>
           <button onClick={onClose} style={{ background:S.surface2, border:`1px solid ${S.border}`, color:S.text, borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:16, flexShrink:0 }}>✕</button>
         </div>
-
-        {/* body */}
         <div style={{ padding:"22px 26px 28px" }}>
           {[
             { label:"Summary", content:<p style={{ fontSize:15, lineHeight:1.7, color:"#cbd5e1" }}>{article.summary}</p> },
@@ -216,14 +272,13 @@ function LinkedInModal({ article, onClose }) {
         maxWidth:640, width:"100%", maxHeight:"88vh", overflowY:"auto",
         animation:"slideUp 0.2s ease",
       }}>
-        {/* Header */}
         <div style={{
           padding:"22px 24px 16px", borderBottom:`1px solid ${S.border}`,
           position:"sticky", top:0, background:S.surface, zIndex:1,
           display:"flex", justifyContent:"space-between", alignItems:"center",
         }}>
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ width:32, height:32, background:LI_BLUE, borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>in</div>
+            <div style={{ width:32, height:32, background:LI_BLUE, borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, color:"#fff", fontWeight:800 }}>in</div>
             <div>
               <div style={{ fontFamily:"'Syne',sans-serif", fontSize:16, fontWeight:800 }}>LinkedIn Post Generator</div>
               <div style={{ fontFamily:"monospace", fontSize:11, color:S.muted, marginTop:1 }}>{article.title?.slice(0,50)}{article.title?.length > 50 ? "…" : ""}</div>
@@ -239,16 +294,13 @@ function LinkedInModal({ article, onClose }) {
               <div style={{ marginTop:16, fontFamily:"monospace", fontSize:13, color:S.muted }}>✍️ Writing your LinkedIn posts…</div>
             </div>
           )}
-
           {error && (
             <div style={{ background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:8, padding:"12px 16px", color:"#fca5a5", fontFamily:"monospace", fontSize:13 }}>
               ⚠️ {error}
             </div>
           )}
-
           {posts && !loading && (
             <>
-              {/* Hook callout */}
               {posts.hook && (
                 <div style={{ background:`${LI_BLUE}15`, border:`1px solid ${LI_BLUE}33`, borderRadius:10, padding:"12px 16px", marginBottom:20, display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
                   <div>
@@ -260,8 +312,6 @@ function LinkedInModal({ article, onClose }) {
                   </button>
                 </div>
               )}
-
-              {/* Tabs */}
               <div style={{ display:"flex", gap:4, marginBottom:16, background:S.surface2, borderRadius:8, padding:4 }}>
                 {[["long","Full Post"],["short","Short Version"]].map(([key,label]) => (
                   <button key={key} onClick={() => setTab(key)} style={{
@@ -273,8 +323,6 @@ function LinkedInModal({ article, onClose }) {
                   }}>{label}</button>
                 ))}
               </div>
-
-              {/* Post content */}
               {["long","short"].map(key => tab === key && (
                 <div key={key}>
                   <div style={{
@@ -323,6 +371,7 @@ function LinkedInModal({ article, onClose }) {
 function Card({ article, onSelect, onDelete, onLinkedIn, viewMode }) {
   const color = tc(article.category);
   const isList = viewMode === "list";
+
   return (
     <div
       onClick={() => onSelect(article)}
@@ -369,9 +418,8 @@ function Card({ article, onSelect, onDelete, onLinkedIn, viewMode }) {
 }
 
 function App() {
-  const [articles, setArticles] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("articlevault_v1") || "[]"); } catch { return []; }
-  });
+  const [articles, setArticles] = useState([]);
+  const [storageReady, setStorageReady] = useState(false);
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
@@ -382,10 +430,28 @@ function App() {
   const [sort, setSort] = useState("newest");
   const [viewMode, setViewMode] = useState("grid");
   const [linkedInArticle, setLinkedInArticle] = useState(null);
+  const [storageError, setStorageError] = useState("");
 
+  // Load articles from persistent storage on mount
   useEffect(() => {
-    try { localStorage.setItem("articlevault_v1", JSON.stringify(articles)); } catch {}
-  }, [articles]);
+    loadArticles().then(loaded => {
+      setArticles(loaded);
+      setStorageReady(true);
+    }).catch(e => {
+      console.warn("Load error:", e);
+      setStorageReady(true);
+    });
+  }, []);
+
+  // Save whenever articles change (but only after initial load)
+  const isFirstSave = useRef(true);
+  useEffect(() => {
+    if (!storageReady) return;
+    if (isFirstSave.current) { isFirstSave.current = false; return; }
+    saveArticles(articles).catch(e => {
+      setStorageError("⚠️ Storage limit reached. Some articles may not be saved. Consider exporting your library.");
+    });
+  }, [articles, storageReady]);
 
   const counts = articles.reduce((acc, a) => { acc[a.category] = (acc[a.category]||0)+1; return acc; }, {});
 
@@ -423,9 +489,26 @@ function App() {
     if (selected?.id === id) setSelected(null);
   }
 
+  // Export library as JSON
+  function exportLibrary() {
+    const blob = new Blob([JSON.stringify(articles, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "articlevault-export.json";
+    a.click();
+  }
+
+  if (!storageReady) {
+    return (
+      <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16 }}>
+        <Spinner size={32} />
+        <div style={{ fontFamily:"monospace", fontSize:13, color:S.muted }}>Loading your library…</div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
-
       {/* Header */}
       <div style={{ background:S.surface, borderBottom:`1px solid ${S.border}`, padding:"16px 28px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -434,16 +517,27 @@ function App() {
             Article<span style={{ color:"#0af" }}>Vault</span>
           </div>
         </div>
-        <div style={{ display:"flex", gap:20, fontFamily:"monospace", fontSize:12, color:S.muted }}>
-          <span><span style={{ color:"#0af" }}>{articles.length}</span> articles</span>
-          <span><span style={{ color:"#0af" }}>{Object.keys(counts).length}</span> topics</span>
-          <span><span style={{ color:"#0af" }}>{articles.reduce((s,a)=>s+(a.readingTime||0),0)}</span> min saved</span>
+        <div style={{ display:"flex", gap:20, alignItems:"center" }}>
+          <div style={{ display:"flex", gap:20, fontFamily:"monospace", fontSize:12, color:S.muted }}>
+            <span><span style={{ color:"#0af" }}>{articles.length}</span> articles</span>
+            <span><span style={{ color:"#0af" }}>{Object.keys(counts).length}</span> topics</span>
+            <span><span style={{ color:"#0af" }}>{articles.reduce((s,a)=>s+(a.readingTime||0),0)}</span> min saved</span>
+          </div>
+          <button onClick={exportLibrary} title="Export library as JSON" style={{ background:"transparent", border:`1px solid ${S.border}`, color:S.muted, borderRadius:6, padding:"5px 10px", cursor:"pointer", fontFamily:"monospace", fontSize:11 }}
+            onMouseEnter={e=>e.currentTarget.style.color=S.text} onMouseLeave={e=>e.currentTarget.style.color=S.muted}>
+            ↓ Export
+          </button>
         </div>
       </div>
 
+      {storageError && (
+        <div style={{ background:"rgba(245,158,11,0.1)", borderBottom:`1px solid rgba(245,158,11,0.3)`, padding:"10px 28px", fontFamily:"monospace", fontSize:12, color:"#fbbf24" }}>
+          {storageError}
+        </div>
+      )}
+
       {/* Body */}
       <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
-
         {/* Sidebar */}
         <div style={{ width:230, background:S.surface, borderRight:`1px solid ${S.border}`, padding:"20px 0", overflowY:"auto", flexShrink:0 }}>
           <div style={{ padding:"0 14px" }}>
@@ -470,7 +564,6 @@ function App() {
 
         {/* Main */}
         <div style={{ flex:1, padding:28, overflowY:"auto" }}>
-
           {/* Input */}
           <div style={{ background:S.surface, border:`1px solid ${S.border}`, borderRadius:16, padding:22, marginBottom:24, position:"relative", overflow:"hidden" }}>
             <div style={{ position:"absolute", top:0, left:0, right:0, height:2, background:"linear-gradient(90deg,#0af,#7c3aed)" }} />
